@@ -1,0 +1,125 @@
+ctrl + e = open exe
+q in cmd = stop dbg
+
+if symbols dont exist - bp $exentry = break at program entry point
+if symbols exist - bp main
+
+.relaod /f -- reload symbols
+"g" -- continue program execution
+"k" -- stack backtrace
+".restart" -- restart program
+
+"bp <address or symbol name>" --- making breakpoint
+"bl" -- listing breakpoints
+"bc <breakpoint number given in bl>" -- removing breakpoints
+"bd <breakpoint number given in bl>" -- disabling breakpoint
+"be <breakpoint number given in bl>" -- enabling breakpoint
+
+
+ba <access type> <data size> <address>
+	Where:
+	<access type> == w (for write-access) or r (for read--write-access) or e (for execute-access)
+	<data size> == 1, 2, 4, or 8 (bytes) or 1 only for e access type
+	<address> == an absolute address, symbol name, or calculation of an address like "rsp+0x24"
+
+example write = ba w 4 00000000`0014fdf4
+example read = ba r 4 00000000`0014fdf4
+example execute = ba e 1 00000001`40001050
+
+
+"r" -- viewing registers
+example = r rax, rsp, bl, r11d
+r ax = 0xf00d, rbx = 0xdeadfacebeefd00d, bl = 0x0f -- modyfing registers example
+
+
+db <address> L<number> == displays <number> bytes starting at <address> 
+dd <address> L<number> == displays <number> doublewords (4 bytes) starting at <address>
+dq <address> L<number> == displays <number> quadwords (8 bytes) starting at <address>
+da <address> == displays as ASCII string at that address until first null terminator
+
+"p" -- step over
+"t" -- step into
+"gu" -- step out
+
+"pa <address or symbol name>"  -- This instruction will print out every instruction it steps over on its way to that address.
+"ta <address or symbol name>" -- This instruction will print out every instruction it steps into (including subroutine addresses) on its way to that address.
+
+"bp main /1" -- one shot breakpint, it gets deleted after triggered
+
+F6 -- attach to already running process
+
+/// setting up kernel debugging
+bcdedit /debug on
+bcdedit /dbgsettings net hostip:ip port:port key:key
+
+ctrl+k -- kernel dbg
+
+
+// kernel dbg
+"ed nt!Kd_IHVDRIVER_Mask 0xf" --  This is what makes debug prints from kernel drivers show up in the debugger
+"devcon.exe install .\KmdfHelloWorld.inf Root\KmdfHelloWorld" -- for loading driver on Debuggee VM
+"devcon.exe remove Root\KmdfHelloWorld" -- for removing driver
+"bu KmdfHelloWorld!DriverEntry" -- making breakpint on driver's entry point
+"dv" -- display local variables
+"dt nt!_EPROCESS" -- dt -> for displaying structures
+"dt -r{depth} {structure type}" -- for Recursively Display Structure Definitions, example = dt -r2 nt!_EPROCESS
+"dt {structure type} {address}" -- Display Memory as Structure. example = dt nt!_EPROCESS ffffb38b26516340
+dx @cr0,b -- for printing control registers in binary format
+
+"sxe ld" -- break on module load
+"sxe -c ".lastevent" ld" -- prints last event of a module
+"sxi -c ".lastevent ; g" ld" -- prints loaded drivers at boot time
+
+gdtl register - shows size of table in bytes
+
+"lm" -- list all kernel and user space modules
+"lm u" - list only userspace modules
+"lm k" - list only kernel mode modules
+"lm sm" - List Modules Sort Modules (Alphabetically)
+"lm f" -- List Modules with Filesystem Path
+"lm ksmf" -- all above in single command
+"lm a <address>" -- List Modules an Address belongs to
+"lm l" -- base address of NT kernel loaded in memory
+
+
+"!load <full_path_to_plugindll>" -- for loading windbg plugins
+"!unload <full_path_to_plugindll>" -- for un-loading windbg plugins
+
+"!process -1 [flags]" -- Display the current process context. example = !process -1 0 (https://learn.microsoft.com/en-us/windows-hardware/drivers/debuggercmds/-process)
+"!process 0 0" -- listing all processes
+"!process 0 [flags] [exe name]" -- Search for the process context based on executable name. example = !process 0 0 notepad.exe
+"!process [PID] [flags]" -- search process context based on PID. example = !process 0x1b44 0
+
+
+// kernel mode commands
+"rdmsr [MSR #]" -- reading MSR's. example = rdmsr 0xC0000100
+"wrmsr [MSR #] [value to write]" -- writing MSR's. example = wrmsr 0xC0000100 0x31337
+"!ms_gdt" -- from SwishDbg extension prints GDT data structure
+"!idt" or "!ms_idt" -- printing entire IDT (interrupt descriptor table)
+"!idt [interrupt #]" -- print specific interrupt number. example = !idt 0n14
+
+
+"!pte" -- shows all the page table entries that would be encountered by the MMU as it attempts to translate a given virtual memory address to a physical address. example = !pte fffff80107401940
+
+!pte always translates an address by using the current page tables. If you'd like to use alternative page tables, you can either:
+
+1. Change process context to the other process, via !process and .process as previously mentioned, and then use !pte
+2. Use !process to find the "DirBase" (first page table) of the other process, and use that as the first parameter to !vtop
+
+"!vtop 0 address" -- translate virtual to physical address
+"!vtop target_memory_space_page_table_base_("DirBase") address"
+
+"!ptov <adress>" --  Physical to Virtual translations for a given page table.
+
+https://techcommunity.microsoft.com/t5/ask-the-performance-team/an-introduction-to-pool-tags/ba-p/372983
+The Windows kernel has multiple "pools", which are really just heaps from which memory can be allocated. Pools can have different "tags", to help developers identify which allocations came from their own code (if they specified a custom tag at allocation time), or when the data is from a pool of all the same type of data structures.
+"!pool <address>" -- windbg command
+
+https://github.com/jjzhang166/windbgtool/blob/master/Dependecies/x64/triage/pooltag.txt
+
+
+https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/managing-hardware-priorities
+Windows has the notion of Interrupt Request Levels (IRQLs). This refers to the prioritization of different interrupt and scheduled sources. So for instance two different types of hardware interrupts might come in, but one (for instance an inter-processor-interrupt) could be put on a list for processing before the other (for instance a clock timer interrupt). Both of which are much higher priority than the normal background thread scheduling activity of context switching between threads which are blocked or which have used all their allotted time.
+
+"!irql" -- command will let you examine what IRQL the context you're currently broken into was running at before the debugger took over. This can be important for knowing the likelihood of code being preempted by higher IRQL code.
+

@@ -1,0 +1,399 @@
+IA-32e -- 64 bit
+IA-32  -- 32 bit
+
+https://www.felixcloutier.com/x86/cpuid
+CPUID = used for cpu feature identification. input for cpuid instruction should be placed inside eax or ecx register. output is stored in eax,ebx,ecx,edx
+
+PUSHFQ/POPFQ -- for read/write into EFLAGS reg
+
+PUSHFQ -- push RFLAGS onto stack
+POPFQ -- pop stack into RFLAGS
+
+EFLAGS:
+	ID flag (bit 21) - used to indicate if processor supports cpuid instruction
+
+RINGS/MODES:
+	real-address mode: everything starts in read mode. (dos runs in real mode), no virtual memory, no priv rings, 16 bit mode
+	SMM (system managment mode): invoked by SMI( system managment interrupt). used for power managment and system security. SMM is similar to arm trust zone.
+	protected mode: adds support for virtual memory and priv rings. Modern OS's run in this mode. 32 bit mode
+	long mode: 64-bit mode.
+
+	real mode->protected mode->long mode(if OS is 64-bit)
+
+	protections rings are interaction between requested protection level (RPL), descriptor priv level (DPL), current priv level (CPL)
+
+	CPL is protection level of currently executing code segment.
+	CPL is defined in Code segment as 2 bits.
+
+	priv rings are enforced by the hardware on instruction fetches and data fetches.
+
+
+MSR's:
+	MSR's provide a way to support cpu feature flags
+	archithectural MSR's start with prefix IA32_
+
+	readmsr -- reading MSR (only available in kernel mode). takes input in ECX returns output in EDX:EAX
+	wrmsr   -- writing to MSR. writes value in EDX:EAX to MSR in ECX
+	
+	IA32_START MSR used for syscall for transfer control into kernel, which is later gonna use it to index into GDT.
+
+	readmsr/wrmsr are also windbg commands.
+	https://wiki.osdev.org/Model_Specific_Registers
+
+segmentation:
+	
+	logical address-> segment selector -> global descriptor table (GDT) or local descriptor table (LDT) -> linear address ->  virtual address (if paging exist linear address is same as virtual address) -> physical address
+
+					   -> GDT segment descriptors point to CS, DS,SS
+
+
+	segmentation  = mechanism for dividing the processor's memory space (linear address space) into smaller protected address spaces called segments.
+
+	to locate a byte in a particular segment, a logical address (far pointer) must be provided. logical address consists of segment selector and an offset.
+	
+	the physical address space is defined as the range of addresses that the processor can generate on its address bus.
+
+	linear address space is a flat 64 bit space.
+
+
+	near pointer                   = 64 bit offset
+	far pointer in 32 bit systems  = 32 bit offset with a 16 bit segment selector value
+	far pointer in 64 bit systems  = 64 bit offset with 16 bit segment selector
+
+	16 bit segment selector =  data structure with 3 fields. RPL (requested priv level), Table indicator (0 = global descriptor table, 1 = local descriptor table). and rest 13 bits are used to specify index into GDT or LDT table.
+
+	segment selector used to index into table to use specific data structure.
+
+	logical address = far pointer that specifies a segment to offest within. 0 + 64 offest
+	linear address = flat 32/64 bit address space , post-segmentation
+	virtual address = address that takes paging into account
+	physical address = offset into physical ram
+
+	in 64-bit mode segmentation is generally but not completely disabled, creating a flat 64-bit linear-address space. The Processors treats the segment base of CS,DS,ES,SS as zero.
+	FS and GS segments are exceptions.
+
+	FS and GS usually points to OS specific data structure.
+
+	Segment registers:
+		six 16 bit registers that hold segment selector.
+
+		there's no way to access hidden part of segment reg unless in hypervisor.
+
+		CS - Code Segment. CS points to a table. table points to a linear address space for that code segment. hidden part is Base address, Limit , Access info
+		SS - Stack Segment
+		DS - Data Segment
+		ES/FS/GS - Extra data Segment regs.
+
+	Windows maintains different CS,SS segment selectors for userspace vs kernel space per process.
+	Windows X86_64 doesnt change DS,ES,FS or GS segment selectors.
+	
+	https://wiki.osdev.org/Segmentation
+
+GDT & LDT: 
+	GDTR register - points to the memory location for a GDT. Its 10 bytes long. 2bytes for table limit (size of table), specifies last valid byte in the table. 4 bytes for 32(64) bit linear base address.  base address + table size.
+		LGDT - load 10 bytes from memory into GDTR. (only from kernel)
+		SGDT - store 10 bytes of GDTR into memory. (possible from userspace)
+	
+	LDTR register - points to the momory location for a LDT. 16 bit area is visible from this register.
+		LLDT - load 16 bit segment selector into LDTR. (only from kernel)
+		SLDT - Store 16 bit segment selector of LDTR to memory. (possible from userspace)
+
+	LDTR - 16 bit index, 0 for GDT it cant find LDT by itself. and then GDT may point to LDT.
+
+	Entries within LDT and GDT are called Segment Descriptor structures.
+
+	tables of GDT and LDT are stored in RAM.
+
+	GDT index 0 is invalid.
+
+	 LDT used to be used for User Mode Scheduling (UMS) and using call gates with LDT for attack:
+		https://www.alex-ionescu.com/bringing-call-gates-back/
+
+	Talks about intel ME:
+		https://www.youtube.com/watch?v=2_aokrfcoUk
+		https://www.youtube.com/watch?v=TsXzDFjXj2s
+
+	GDT & LDT structures:
+
+	each entry in GDT and LDT is segment descriptor data structure.
+
+	each segment has a segment descrptor which specifies the size of segment, the access rights and priv level, segment type, location of first byte of the segment in the linear address space.
+
+	L flag bit 21: specifies whether this is 64 bit segment or not.
+
+	if *CS( code segment) == L:
+		64 bit mode
+	else:
+		32 bit protected mode.
+
+	segment base address is linear address 32 bit for 32 bit compatibility mode, for 64 bit base address is always 0 for CS,SS,DS,ES. For FS and GS hidden part of segment registers is mapped into IA32_FS_BASE and IA32_GS_BASE MSR's. full 64 bit linear address is written inside MSR's instead of segment descriptors.
+
+	segment limit: 20 bit value, size of segment (only used in 32 bit compatibility mode). limits in 64 bit mode aren't checked.
+	G flag: specifies whether the limit is specified in bytes or 4096 byte chunks(kb) for 32 bit mode. no G flag in 64 bit mode.
+	P (present) flag: 0 specifies that segment doesnt exist, 1 segment exist. #NP exception is generated if someones tries to access segment which doesnt exist.
+	S (system) flag: 0 for system segment, 1 for CS or DS.
+	Type flag: 4 bits, depending if its system or non system segment. 16 different types.
+
+	Expand down data segments: originally for stack segments to allow stack growing towards low addresses.
+
+	You cant create read-only and expand down for stack segment. #GP exception is going to be generated.
+
+	Conforming segments: allow low priv code to execute them. if u make ring 0 conforming segment it will allow ring 3 code to execute in ring 0.
+
+	Non-conforming segments: it will throw #GP exception if low priv code tries to execute.
+
+	none of the code segments are writeable.
+
+	KGDTENTRY64 windows struct: combines S and Type fields. which holds 5-bit fields of 32 bit types instead of 4 bit fields of 16 bytes.
+
+	D/B flag: depends on descriptor type:
+		if (segment_descriptor[type] == code_segment):
+			D/B = D (default opcode size) flag (this is what's used by the processors to interpret exactly same instructions but with different size operands).
+			if (D == 0) { processors uses 16 bit operand for instruction}
+			if (D == 1) {processors uses 32 bit operand for instruction}
+			// instruction prefic 0x66 can be used to overwrite D flag and select custom operand size.	
+		
+		if (segment_descriptor[type] == stack_segment(data segment that points to SS register)):
+			D/B = B (specifies whether stakc pointer usage with push/pop/call moves stack pointer by 16 bits or 32 bits
+			if (B == 0) { sp move by 16}
+			if (B == 1) { sp move by 32}
+			// in 64 bit mode its always going to use 64 bit push/pops
+
+		if (segment_descriptor[type] == expand_down_segment):
+			D/B = B flag 
+			if (B == 0) {upper_bound = 0xFFFF}
+			if (B == 1) {upper_bound = 0xFFFFFFFF}
+
+	DPL (descriptor priv level) flag:
+
+		if ((segment_descriptor[type] == code_segment) && non_conforming_segment = true && DPL = 0) {only ring 0 code can execute within this segment}
+		if ((segment_descriptor[type] == data_segment && DPL == 0) { only ring zero code can write/read data from/to this segment}
+
+	Code segments descriptor fields with flags: deafult size(32bit or 16), L flag, P flag, DPL, Type flag.
+
+	TSS & LDT: in GDT entry points to the LDT.
+
+	CSME micro-kernel uses segmentation to make Non-executable permissions instead of N^X.
+
+
+	https://github.com/ptresearch/IntelME-JTAG/blob/master/Inside_Intel_Management_Engine.pdf
+	https://www.youtube.com/watch?v=JMEJCLX2dtw
+
+Call Gates:
+
+	call gate -- its a way to transfer control from one segment to another at different priv level	
+
+	Call gate descriptor - 16 byte system type descritpor in GDT/LDT. it has segment selector inside of it and segment offset.
+
+	to transition from CPL 3 to CPL 0 you need CALL instruction with a far pointer that had a segment selector that pointed to call gate segment descriptor.
+
+	https://wiki.osdev.org/Descriptor#Call_Gate_Descriptor
+
+	base address of CS reg + offset of call gate descriptor = address of code in ring 0
+
+	segment selector points somewhere in GDT&LDT.
+
+	how to return from call gate: just ret instruction lol
+
+	call gate -> GDT&LDT -> protected procedure (code,stack) at ring 0.
+
+	https://j00ru.vexillium.org/2010/01/descriptor-tables-in-kernel-exploitation-a-new-article/?lang=en
+	https://github.com/therealdreg/dregate
+
+
+interrupts & exceptions:
+	interrupts - coming from external hardware and indicate events
+	exceptions - coming from OS and indicates error (fault, trap, abort)
+	IDT - pointer to IDT is located in IDTR register
+
+	https://wiki.osdev.org/Interrupt_Descriptor_Table
+	IDTR format:
+		lower(idtl) 16 bits  - table limit (size of table in bytes)
+		upper(idtr) 47/79 bits -  32/64 bit linear address (pointer to IDT)
+		lidt - used to load 10 bytes value into idtr
+		sidt - used to store 10 bytes from idtr to memory
+	
+	IDT holds array of 256 16 byte descriptor entries. 0 - 31 are reserved. 32 - 255 are used defined. Basically holds array of function poiters where each index corresponds to particular interrupt.
+	each IDT entry holds Gate Descriptor
+	IDT has descriptors describe two types of gates: interrupt gates, trap gates
+
+	interrupt masking used to disable particular interrupt. by clearinng IF flag (CLI clear if, sti set if)
+
+	in real mode address range from 0x0000-0x003ff is occupied by special type called IVT (interrupt vector table) in protected mode this is called IDT (interrupt descriptor table)
+
+	IVT AND IDT both map interrupts to ISR that handle them.
+	in real mode IVT does this by storing logical address of each ISR. each interrupt takes 4 bytes.
+
+	segfault usually arises  when u try to access some memory u arent supposed to.. usually #GP fault is raised(page fault)
+	int instruction - used for invoking interrupt
+	iret instruction - returninng from interrupt
+	int3 instruction - used for making breakpoints (0xcc byte)
+
+Task State Segment(TSS):
+	https://wiki.osdev.org/Task_State_Segment
+	it contains task register (tr): which has hidden and visible part. visible part is supposed to have 16 bit segment selector
+
+	instructions: LTR,STR.. 
+	loads segment selector into TR (privelged instruction)
+	stores segent selector of TR into memory. (unpriv instruction)
+	task gates are only supported in 32 bit mode.
+
+Paging:
+	physical memory is divided into fixed sized chunks called pages
+	TLB (translation lookaside buffer) stores cache of virtual -> physical memory mappings that MMU uses.
+	with paging, physical address space can have 2^64-1 bytes of ram.
+	virtual address can also be "paged out" to a disk for later use.
+	
+	CR0 reg - PE bit 0 (needs to be on to get into protected mode), WP BIT 16 (stops ring 0 from writing into read-only pages), PG BIT 31 (must be set to enable paging)
+	CR2 reg - holds linear address of page-fault (if page fault occurred)
+	CR3 reg - points to the start of page tablez
+	CR4 reg - PSE bit 4 (needs to be enabled if you want pages greater then 4KB), PAE BIT 5 (enables physical address extension.. originally used on 32-bit systems to make address space larger), PGE BIT 7(used for caching page table info), LA57 BIT 12 (enables 57-bit linear addresses)
+
+	PAE paging translates 32 bit linear address to 52 physical address
+
+	in 32-bit mode 2-level paging is being used.
+	4-level paging (4KB pages):
+		cr3 -> PML4E -> PDPTE(PAGE DIRECTORY POINTER TABLE ENTRY) -> PDE -> PTE -> PHYSICAL ADDRESS
+	5-level paging :
+		57-bit linear address.
+		cr3 -> PML5E (page map level 5 entry) -> PML4E -> PDPTE(PAGE DIRECTORY POINTER TABLE ENTRY) -> PDE -> PTE -> PHYSICAL ADDRESS
+
+	PML4E:
+		BIT 0 P (present bit, if 1 it attempts to access linear address which corresponds to PML4E)
+		BIT 1 R/W (IF 1 R/W ALLOWED, IF 0 ONLY READ)
+		BIT 2 U/S (IF 1 PROGRAM THAT IS RUNNING IN ANY MODE IS ALLOWED TO ACCESS IT, IF 0 ONLY CPL < 3 IS ALLOWED)
+
+	PDPTE:
+		BIT 7 PS (indicates whether it entry points to 1GB page or page directory)
+		BIT 6 D (dirty bit used by OS's to know whether given memory location has been written to)
+		BIT 8 G (GLOBAL BIT used for caching of virtual -> physical memory in TLB)
+	
+	PDE:
+		BIT 7 PS (indicates whether is pointing to 2MB page or page table)
+		
+	mitigations:
+		SMAP(SUPERVISOR-MODE ACCESS PREVENTION) - forbids ring 0 code from read/write non-supervisor pages.
+		SMEP(SUPERVISOR-MODE EXECUTION PREVENTION) - forbids ring 0 code to execute non-supervisor pages.
+		idea: set U/S flag to 0 then r/w/x userspace code...?idk if it would work 
+	
+	https://www.cs.rutgers.edu/~pxk/416/notes/09a-paging.html
+	http://www.cirosantilli.com/x86-paging/
+	https://lwn.net/Articles/717293/
+
+
+WINDOWS:
+	CR3 VALUE IS STORED INSIDE DirectoryTableBase FIELD OF KPROCESS STRUCTURE. KPROCESS STRUCTURE IS SUBSTRUCTURE OF EPROCESS STRUCTURE.
+
+	EACH PROCESS IN WINDOWS IS REPRESENTED BY EXECUTIVE PROCESS BLOCK (EPROCESS).
+	EPROCESS HOLDS POINTERS TO SUBSTRUCTURE CALLED KPROCESS(KERNEL PROCESS BLOCK), AND PROCESS ENV BLOCK (PEB)
+
+	cdecl calling convention: uses only stack for passing parameters, caller of function is supposed to clean up the stack.
+	
+	stdcall calling convention: same as cdecl except callee(function being called) 
+	is supposed to clean up the stack.
+
+	fastcall calling convention: used 4 regs to pass parameters. else pushed onto the stack.
+
+	storage device driver stack windows:
+	lowest - STORAGE PORT DRIVERS:
+		SCSI MINIPORT, STORPORT MINIPORT, ATA MINIPORT, IDE MINIPORT 
+	MEDIUM - STORAGE CLASS DRIVERS:
+		DISK.SYS -- create interact with lower layers of disk subsystem, drivers create PDO(physicall device object that represents each partition), when a filesystem is mounted onto partition filesystem driver creates VDO(volume device object)
+	HIGH - FILESYSTEM DRIVERS:
+		NTFS.SYS, FASTFAT.SYS -- create VDO and CDO (control device object)
+
+	windows subsystem consists of 
+	user-mode Client-server Runtime subsystem (csrss.exe): plays important role for managing user-mode processes & threads.
+	kernel-mode device driver (win32k.sys)
+
+	windows system call interface is Native API OF WINDOWS.
+	IN WINDOWS IVT BECAME INTERRUPT DISPATCH TABLE (IDT)
+
+	KiSystemService: its system service dispatcher, uses info passed to it from user-mode to locate address of Native API routine and invoke native api routine.
+
+	SSDT(SYSTEM SERVICE DISPATCH TABLE): contains function address to handle specific system call. system can make system call by using interrupt 0x2e or syscall instruction. invoking system call make KiSystemService be invoked inside the kernel.
+	KiSystemService read system call number into eax reg and looks up call in SSDT.
+
+	calling Zw*() routines from kernel mode(eg used by drivers) is preffered way instead of Nt*().
+
+	IRP is represented as filesystem I/O request from top to bottom of stack.
+
+	BIOS BOOTUP PROCESS:
+
+		BIOS BOOT CODE -> MBR -> VBR AND INITIAL PROGRAM LOADER -> BOOTMGR -> WINLOAD.EXE -> KERNEL IMAGE AND BOOT START DRIVERS
+
+		MBR:
+			IS DATA STRUCTURE CONTAINING INFORMATIONS RELATED TO HARD-DRIVE PARTITIONS AND BOOT-CODE. MAIN PURPOSE IS TO DETERMINE ACTIVE PARTITION(BOOTABLE PARTITION AS SYSTEM VOLUME). BOOT-CODE CAN HOLD AT MOST 446 BYTES. IT READS VBR INTO FIRST SECTOR AND TRANSFERS CONTROL TO IT.
+			MBR IS LOADED AT FIXED ADDRESS 0X7C00.
+
+		VBR AND INITIAL PROGRAM LOADER: 
+			VBR CONTAINS PARTITION LAYOUT INFORMATION, WHICH SPECIFIES THE TYPE OF FILESYSTEM IN USE AND ITS PARAMETERS AND CODE THAT READS INITIAL PROGRAM LOADER (IPL) FROM ACTIVE PARTITION. IPL IMPLEMENTS FILESYSTEM-PARSING FUNCTIONALITY IN ORDER TO READ FILES FROM PARTITION FILESYSTEM.
+			VBR STARTS WITH JMP INSTRUCTION WHICH TRANSFERS CONTROL OF SYSTEM TO VBR CODE. VBR CODE READS AND EXECUTES IPL FROM PARTITION LOCATION OF WHICH IS SPECIFIED BY HiddenSectors FROM _BIOS_PARAMETER_BLOCK_NTFS STRUCT. 0XAA55 IS VBR SIGNATURE. IPL IS JUST USED TO PARSE FILESYSTEM AND TO LOAD BOOTMGR.
+
+		BOOTMGR: READ FROM BCD (BOOT CONF DATA). IT CONSITS OF 16-BIT REAL MODE CODE AND COMPRESSED PE IMAGE. WHEN UNCOMPRESSED IS EXECUTED IN PROTECTED MODE. BcdLibraryBoolean_DisableIntegrityCheck DISABLES KERNEL INTEGIRTY CHECK (IGNORED IN WINDOWS 7 AND HIGHER AND CANNOT BE SET IF SECURE BOOT IS ON). BcdOSLoaderBoolean_WinPEMode TELLS THE KERNEL TO LOAD IN PREINSTALLATION MODE,DISABLING CI.
+		BcdLibraryBoolean_AllowPrereleaseSignatures ENABLES TESTSIGNING. BOOTMGR THEN TRANSFERS CONTROL TO WINLOAD.EXE (BOOTLOADER).
+
+		WINLOAD.EXE -> ENABLES PAGING, LOADS KERNEL & BOOT-START DRIVERS. 
+
+
+	UEFI BOOTUP PROCESS:
+		LOADS BOOTMGFW.EFI
+		winload.efi -- bootloader
+		runs in protected mdoe (32 bit)
+
+		EFI system partition is active system partion in MBR (which holds OS boot loader) formatted with fat32 filesystem. the path to the bootloader is inside NVRAM. path on windows is usually ("\EFI\Microsoft\Boot\bootmgfw.efi") used to locate OS kernel loader - winload.efi
+		contains  EFI PART signature in GPT  header.
+		EFI system partiton usually has GUID of C12A7328-F81F-11D2-BA4B-00A0C93EC93B.
+
+		uefi firmware is stored on SPI flash.
+
+		HalEfiRuntimeServiceTable holds a pointer to EFI_RUNTIME_SERVICES, which
+		in turn contains the addresses of entry points of service routines that will
+		do things like get or set the NVRAM variable, perform a Capsule Update..
+		EFI_SYSTEM_TABLE structure
+
+		BIOSWE -  BIOS Write Enable bit
+		BLE -  BIOS Lock Enable bit
+		SMM_BWP - SMM BIOS Write Protection bit
+		PRx - SPI Protected Ranges (PR registers PR0–PR5) do not protect the entire BIOS region from modifications, but they offer some flexibility for configuring specific BIOS regions with the ability to read or write policies. 
+
+		above bits are setted up in DXE stage.
+
+		Option ROM is PCI/PCIe expansion firmware (ROM) in x86 code located on a PCI-compatible device
+
+		Verified Boot checks that the platform firmware hasn’t been altered or modified
+		Measured Boot computes cryptographic hashes of certain components involved in the boot process and stores them in Trusted Platform Module Platform Configuration Registers
+
+		Intel BootGuard implements verified and measured boot inside BootGuard Authenticated Code Module (ACM) which are executed before UEFI firmware.
+		location of ACM is located inside firmware interface table data structure.
+
+		arm has Trusted Boot Board (TBB) which contains trust zone, trust zone seperates secure world and normal world, with two different bootloader
+
+		boot manager USES CONF DATA(BCD BOOT CONF DATA) STORED IN REGISTRY HIVE TO START THE SYSTEM.
+
+		intel boot guard ensures that everything in bios section of spi flash chip is authenthicated, secure boot then handles thing like authentication of OS bootloader.
+
+		ELAM(early launch anti-maalware) driver: used to provide third party antivirus software access to early boot-start of windows and to ensure everything is legit. also determines which drivers to load by registry key in HKLM\System\CurrentControlSet\Control\EarlyLaunch\DriverLoadPolicy.
+
+		IRP's (I/O request packets): usually created by IO manager on behalf of some user-mode app
+		http://undocumented.ntinternals.net/ -- for reference on native api
+
+linux resources:
+	https://lwn.net/Articles/821723/
+	https://programmersought.com/article/66147379106/
+	https://akkadia.org/drepper/tls.pdf	
+	https://www.kernel.org/doc/Documentation/vm/hugetlbpage.txt
+	https://www.kernel.org/doc/Documentation/cgroup-v1/cgroups.txt
+	https://www.kernel.org/doc/Documentation/cgroup-v2.txt
+	https://www.kernel.org/doc/Documentation/cgroups/cpusets.txt
+	https://www.kernel.org/doc/Documentation/cpu-hotplug.txt
+	https://www.kernel.org/doc/Documentation/trace/tracepoints.txt
+	https://www.kernel.org/doc/Documentation/trace/ftrace.tx
+	https://github.com/torvalds/linux/blob/master/Documentation/security/credentials.rst
+	https://github.com/torvalds/linux/blob/16f73eb02d7e1765ccab3d2018e0bd98eb93d973/Documentation/x86/x86_64/mm.txt
+	https://www.kernel.org/doc/Documentation/scheduler/completion.txt
+	http://kernelnewbies.org/Documents/InitcallMechanism
+
+windows resources:
+	https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/ntos/amd64_x/kpcr.htm
+	https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/pebteb/teb/index.htm
